@@ -10,6 +10,7 @@ from torchsummary import summary
 from random import sample 
 from scipy.stats import truncnorm
 
+pl.clf()
 
 def truef(x,fun,a,b): # Define the true function for our label y_data
     # Define Set of Functions
@@ -55,7 +56,8 @@ def datasample(N,deg,fun,a,b,legendre):
     val_inputs = []
     val_labels = []
     xrange_extended = []
-    type = 1
+    deg = 1
+    type = 2
     if type == 1:
         xrange = truncnorm.rvs(-1,1,size=1000)
         val = truncnorm.rvs(-1,1,size=int(1000/5))
@@ -73,11 +75,11 @@ def datasample(N,deg,fun,a,b,legendre):
         train_inputs.append(s)
         train_labels.append([y])
     
-    for x in np.sort(sample(val.tolist(),int(N/5))):
+    for x in np.sort(sample(val.tolist(),int(N))):
         y = truef(x,fun,a,b)
         s = []
         for i in np.arange(deg):
-            s.append(x**(i+1))
+            s.append(x)
         
         val_inputs.append(s)
         val_labels.append([y])
@@ -98,117 +100,81 @@ def datasample(N,deg,fun,a,b,legendre):
         
     return train_inputs,train_labels,xrange_extended,xxrange,val_inputs,val_labels
 
-def combinatorics(n):
-    arr = []
-    arr2 = np.array([(k,n-k) for k in range(n+1)])
-    arr.append(arr2)
-    return arr
+def modelonxx(model):
+    
+    YY = []
+    for i in np.arange(1):   
+        h = 1/10
+        xx = np.linspace(-1+i*h,-1+(i+1)*h,100)
+        xx = torch.tensor(xx,requires_grad=False).view(1,-1).float()
+        yy = model(xx)
+        YY.append(yy.data.numpy())
+        pl.plot(xx.data.numpy()[0],yy.data.numpy()[0])
+        pl.show()
+        input("waiting")
+        
+    return np.array(YY).reshape(1000,-1)
+    
+    
 
 def Interpol(N,deg,iter,fun=0,a=1,b=1,displayReal=0,legendre=0):
     
     inputs, labels,xrange_extended,xrange,val_inputs,val_labels = datasample(N,deg,fun,a,b,legendre) # Initiate the data and labels
-    class Net1(torch.nn.Module): # Initiate the network
-        def __init__(self):
-            super(Net1,self).__init__()
-            self.fc1 = torch.nn.Linear(deg,1)
-            self.sigmoid = torch.nn.Sigmoid()
-        
-        def forward(self,x):
-            x = self.fc1(x)
-            return x
     
     class Net2(torch.nn.Module): # Initiate the network
         def __init__(self):
             super(Net2,self).__init__()
-            self.fc1 = torch.nn.Linear(deg,5)
-            self.fc2 = torch.nn.Linear(5,2)
-            self.fc3 = torch.nn.Linear(2,1)
+            self.fc1 = torch.nn.Linear(N,2*N)
+            self.fc2 = torch.nn.Linear(2*N,int(N))
             self.sigmoid = torch.nn.Sigmoid()
         
         def forward(self,x):
             x = self.sigmoid(self.fc1(x))
-            x = self.sigmoid(self.fc2(x))
-            return self.fc3(x)
+            return self.fc2(x)
             
-    model = Net1()
+    model = Net2()
     criterion = torch.nn.MSELoss(reduction='sum')
-    optimizer = torch.optim.SGD(model.parameters(),lr=0.001,momentum=0.9)
+    optimizer = torch.optim.SGD(model.parameters(),lr=0.01,momentum=0.9)
     
     y_data = torch.tensor(labels,requires_grad=False)
-    x_data = torch.tensor(inputs,requires_grad=False)
-    val_labels = torch.tensor(val_labels,requires_grad=False)
-    val_inputs = torch.tensor(val_inputs,requires_grad=False)
-    xrange_extended = torch.tensor(xrange_extended,requires_grad=False)
-    xrange = torch.tensor(xrange,requires_grad=False)
-    ETetaTrue = []
-    ETetaTetastar = []
-    EL2Validation = []
-    EL2 = []
-    EL2MLE = []
+    x_data = torch.tensor(inputs,requires_grad=False).view(1,-1)
+    val_labels = torch.tensor(val_labels,requires_grad=False).view(1,-1)
+    val_inputs = torch.tensor(val_inputs,requires_grad=False).view(1,-1)
+    
+    xx = np.linspace(-1,1, 1000)
+    #pl.plot(xx,truef(xx,fun,a,b))
+    
+    pl.show()
+    EL2Val = []
+    EL2train = []
+    ELinf = []
+    #input("Press Enter to continue...")
     for epoch in range(iter):
         y_pred = model(x_data)
-        loss = criterion(y_pred,y_data)
+        loss = criterion(y_pred,y_data.view(1,-1))
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        yrange_formated = model(xrange_extended).data.numpy()
         
-        AbsError = np.abs(model(xrange).data.numpy().reshape(-1,1)-truef(np.linspace(-1,1,1000),fun,a,b).reshape(-1,1))
-        MaxError = np.max(AbsError)
-        L2Error = np.sum((model(val_inputs).data.numpy().reshape(-1,1)-val_labels.data.numpy().reshape(-1,1))**2)/val_labels.data.numpy()[0]
-        MaxErrorIndex = round(np.linspace(-1,1,1000)[np.argmax(AbsError)],4)
-        print(f'Epoch: {epoch} | Loss: {loss} | MaxError : {MaxError} | L2 on Validation : {L2Error}')
-        ETetaTrue.append(MaxError)
-        EL2.append(np.sum((model(xrange).data.numpy().reshape(-1,1)-truef(np.linspace(-1,1,1000),fun,a,b).reshape(-1,1))**2)/1000)
-        EL2Validation.append(L2Error)
-        EL2MLE.append(np.sum((MLEf(np.linspace(-1,1,1000),x_data,y_data)[0].reshape(1000,1)-truef(np.linspace(-1,1,1000),fun,a,b).tolist())**2)/100)
-       # AbsError2 = np.abs(model(xrange).data.numpy().reshape(-1,1)-np.array([MLEf(np.linspace(-1,1,1000),x_data,y_data)]).reshape(-1,1))
-       # ETetaTetastar.append(np.max(AbsError2))
-    def predf(x):
-        s = 0
-        N = len(model.fc1.weight.tolist()[0])
-        for i in np.arange(N):
-            s = s + model.fc1.weight.tolist()[0][i]*(x**(i+1))
-            
-        return s+model.fc1.bias.item()
+        EL2train.append(loss)
+        EL2Val.append(np.sum((val_labels.data.numpy()-model(val_inputs).data.numpy())**2)/val_labels.data.numpy().shape[1])
+       # modelonxx(model)
+        pl.plot(x_data.data.numpy()[0],y_pred.data.numpy()[0],c='r')
+        pl.show()
     
-    xx = np.linspace(-1,1,1000)
-
-        
-    print("Model MLE :",  MLEf(xx, x_data, y_data)[1])
-    print("Model Prediction (after training) :", model.fc1.weight.data.numpy())
-    pl.scatter(x_data[:,0],y_data.data,c='blue')
-    pl.scatter(val_inputs[:,0],val_labels.data,c='red')
-    pl.plot(xx,yrange_formated,c='red') # Plot the predicted f by the model
-   # pl.plot(xx,MLEf(xx, x_data, y_data)[0],c='green')
-    green_patch = mpatches.Patch(color='green', label=r'$u^*_{\theta}$')
-    red_patch = mpatches.Patch(color='red', label=r'$u_{\theta}$')
-    if displayReal and fun != 0:
-        pl.plot(xx,truef(xx,fun,a,b),c='blue')
-        blue_patch = mpatches.Patch(color='blue', label=r'$f$')
-        pl.legend(handles=[red_patch,blue_patch,green_patch])
-    else:
-        pl.legend(handles=[red_patch,green_patch])
-    #pl.scatter(np.linspace(-1,1,N),model(x_data).data,c='red')
-    plt.pyplot.ylim(top=1.5,bottom=-1.5)
-    plt.pyplot.show()
-    pl.plot(range(iter),EL2,color='green')
-    pl.plot(range(iter),EL2Validation,color='r')
-    #pl.plot(range(iter),EL2MLE,color='b')
-  #  pl.plot(range(iter),ETetaTetastar,color='g')
+    pl.scatter(x_data,y_data,c='b')
+    pl.scatter(val_inputs,val_labels,c='r')
+    pl.show()
+    pl.plot(range(iter),EL2Val,color='blue')
+    pl.plot(range(iter),EL2train,color='g')
     plt.pyplot.xlabel('$n$')
     plt.pyplot.ylabel('$e_n$')
-    green_patch = mpatches.Patch(color='green', label=r'Error of NN on training')
-    red_patch = mpatches.Patch(color='red', label=r'Error of NN on validation')
-    blue_patch = mpatches.Patch(color='blue', label=r'Error of MLE on $[-1,1]$')
-    pl.legend(handles=[red_patch,blue_patch,green_patch])
     plt.pyplot.yscale("log")
-    plt.pyplot.show()
+    pl.show()
+    summary(model, input_size=(1, N))
     
-    return EL2, EL2Validation
-
-
-EL2, EL2Validation = Interpol(100,28,10000,1,3,1/2,1,0)
+    return EL2Val
+EL2Val = Interpol(100,3,50,6,3,1/2,1,0)
 # Interpol(N,deg,epoch,fun=2, a=1, b=2, displayReal=1,typePoint=0)
 # N : number of regression points
 # deg : degree of interpolating polynomial
