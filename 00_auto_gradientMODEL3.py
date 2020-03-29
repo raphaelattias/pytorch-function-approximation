@@ -14,6 +14,7 @@ from scipy.integrate import quadrature
 from torch_lr_finder import LRFinder
 
 
+
 pl.clf()
 
 def truef(x,fun,a,b): # Define the true function for our label y_data
@@ -28,10 +29,7 @@ def truef(x,fun,a,b): # Define the true function for our label y_data
     f8 = lambda t : np.sin(4*pl.pi*x)*np.exp(-np.abs(5*x))
     
     def f7(x):  
-        y = np.zeros(len(x))
-        y[x < 0] = float(-5*x)
-        y[x >= 0] = float(sin(x)**2)
-        return y
+        return np.piecewise(x, [x < 0, x >= 0], [lambda x: -5*x, lambda x: np.sin(x)**(1/4)]).tolist()
         
     F = [f0,f1,f2,f3,f4,f5,f6,f7,f8]
     
@@ -70,16 +68,17 @@ def datasample(N,deg,fun,a,b,legendre):
     train_labels = []
     val_inputs = []
     val_labels = []
-    xrange_extended = []
     deg = 1
-    type = 2
+    type = 1
     if type == 1:
         xrange = truncnorm.rvs(-1,1,size=1000)
         val = truncnorm.rvs(-1,1,size=int(1000/5))
     elif type == 2:
         xrange = np.random.uniform(-1,1,1000)
         val = np.random.uniform(-1,1,int(1000/5))
-    for x in np.sort(sample(xrange.tolist(),N)): # Create the sample inputs and their labels
+    xrange = np.linspace(-1,1,1000)
+    
+    for x in sample(xrange.tolist(),N): # Create the sample inputs and their labels
        # y = np.random.randn()
         y = truef(x,fun,a,b)
         s = []
@@ -87,9 +86,9 @@ def datasample(N,deg,fun,a,b,legendre):
             s.append(x**(i+1))
         
         train_inputs.append(s)
-        train_labels.append([y+np.random.randn()/30])
+        train_labels.append([y])
     
-    for x in np.sort(sample(val.tolist(),int(N))):
+    for x in sample(val.tolist(),int(N)):
         y = truef(x,fun,a,b)
         s = []
         for i in np.arange(deg):
@@ -97,20 +96,6 @@ def datasample(N,deg,fun,a,b,legendre):
         
         val_inputs.append(s)
         val_labels.append([y])
-        
-    
-    for x in np.linspace(-1,1,1000):
-        s = []
-        for i in np.arange(deg):
-            s.append(x**(i+1))
-        xrange_extended.append(s)
-    
-    xxrange= []
-    for x in np.linspace(-1,1,1000):
-        s = []
-        for i in np.arange(deg):
-            s.append(x**(i+1))
-        xxrange.append(s)
         
     return train_inputs,train_labels,val_inputs,val_labels
 
@@ -159,7 +144,7 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1,displayReal=0,legendre=0):
             super(Net3,self).__init__()
             self.fc1 = torch.nn.Linear(1,neurons)
             self.fc2 = torch.nn.Linear(neurons,1)
-            self.sigmoid = torch.nn.ReLU()
+            self.sigmoid = torch.nn.Sigmoid()
         
         def forward(self,x):
             x = self.sigmoid(self.fc1(x))
@@ -176,6 +161,7 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1,displayReal=0,legendre=0):
     EL2Val = []
     EL2train = []
     ELinf = []
+    EL2 = [] # L2 integral between f and u_teta
     #input("Press Enter to continue...")
     
     lr_finder = LRFinder(model, optimizer, criterion)
@@ -200,32 +186,45 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1,displayReal=0,legendre=0):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            
+        def modelonx(x):
+            return model(torch.tensor(x.reshape(-1,1).tolist(),requires_grad=False)).data.numpy().reshape(1,-1)
+    
+        def L2error(x):
+            return (modelonx(x)-truef(x,fun,a,b).reshape(1,-1))**2
+        
+        ELinf.append(max(abs(val_labels-model(val_inputs))))
+        EL2.append(quadrature(L2error,-1,1)[0][0])
         EL2Val.append(criterion(val_labels,model(val_inputs)))
         EL2train.append((criterion(datasamp[:][1],model(datasamp[:][0]))))
-        print(f'Epoch: {epoch}, LR : {learning}  L2 Error on training : {EL2train[-1]} | L2 Error on validation : {EL2Val[-1]} ')
+        print(f'Epoch: {epoch} L2 Error on training : {EL2train[-1]} | L2 Error on validation : {EL2Val[-1]} | L2 on [-1,1] : {EL2[-1]}')
 
        # modelonxx(model)
-        if epoch % 10 == 0:   
-            pl.scatter(x,ytrue,c='blue')
-            pl.scatter(val_inputs.data.numpy(),val_labels.data.numpy(),c='red')
-            pl.plot(np.array(x).reshape(1,-1)[0],np.array(ypred).reshape(1,-1)[0])
-            pl.plot(np.linspace(-1,1,100),truef(np.linspace(-1,1,100),fun,a,b),c='blue')
+        if epoch % 5 == 0:   
+            #pl.scatter(val_inputs.data.numpy(),val_labels.data.numpy(),c='red')
+            list1 = np.array(x).reshape(1,-1)[0]
+            list2 = np.array(ypred).reshape(1,-1)[0]
+            s = sorted(zip(list1,list2))
+            list1 = [e[0] for e in s]
+            list2 = [e[1] for e in s]
+            fig, ax = pl.subplots(nrows=1, ncols=2)
+            ax[0].plot(list1,list2)
+            ax[0].scatter(x,ytrue,c='blue')
+            #pl.plot(np.array(x).reshape(1,-1)[0],np.array(ypred).reshape(1,-1)[0])
+            ax[0].plot(np.linspace(-1,1,100),truef(np.linspace(-1,1,100),fun,a,b),c='blue')
+            ax[1].semilogy(range(epoch+1),EL2Val,color='blue')
+            ax[1].semilogy(range(epoch+1),EL2train,color='g')
+            ax[1].semilogy(range(epoch+1),EL2,color='red')
+            ax[1].semilogy(range(epoch+1),ELinf,color='black')
             pl.show()
-    pl.plot(range(iter),EL2Val,color='blue')
-    pl.plot(range(iter),EL2train,color='g')
-    plt.pyplot.xlabel('$n$')
-    plt.pyplot.ylabel('$e_n$')
-    plt.pyplot.yscale("log")
-    pl.show()
+        
+    xx = np.linspace(-1,1,1000)
+
     
-    def modelf(x):
-        s = []
-        for x in np.arange(x.shape[0]):
-            s.append(model(double(x)))
-        return s
     
-    return model
-model = Interpol(100,100, 1000,1,3,1/2,1,0)
+    return L2error
+
+x = Interpol(100,8, 1000,1,3,1/4,1,0)
 # Interpol(N,neurons,epoch,fun=2, a=1, b=2, displayReal=1,typePoint=0)
 # N : number of regression points
 # deg : degree of interpolating polynomial
