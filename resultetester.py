@@ -21,8 +21,27 @@ pl.clf()
 
 def truef(x,fun): # Define the true function for our label y_data
     # Define Set of Functions
-    a = 4.5
-    b = 1.75
+    if fun == 11:
+        class target(torch.nn.Module): # Arbitrary network
+            def __init__(self):
+                super(target,self).__init__()
+                self.fc1 = torch.nn.Linear(1,2,bias=True)
+                self.fc2 = torch.nn.Linear(2,1,bias=False)
+                self.relu = torch.nn.ReLU()
+                self.fc1.bias.data = torch.tensor([-0.0146,  0.9464]).reshape(1,-1).float()
+                self.fc1.weight.data = torch.tensor([-0.4576,  0.2975]).reshape(-1,1).float()
+                self.fc2.weight.data = torch.tensor([-0.9804,  -0.8320]).reshape(1,-1).float()
+            
+            def forward(self,x):
+                x = self.relu(self.fc1(x))
+                return self.fc2(x)
+        
+        model = target()
+        return model(Variable(torch.from_numpy(x)).reshape(-1,1).float()).detach().numpy()
+        
+    
+    a = 3
+    b = 1/4
     def f0(x):
         n = 10
         y = 0
@@ -72,7 +91,7 @@ def chebychevPoints(N):
     return arr
 
 def datasample(N,fun,a,b,legendre):
-    type = 2
+    type = 1
     if type == 1:
         train_inputs = truncnorm.rvs(a,b,size=N)
         val_inputs = truncnorm.rvs(a,b,size=int(N*3))
@@ -120,7 +139,11 @@ def weierstrass(x, N):
 
 
 def Interpol(N,neurons,iter,fun=0,a=1,b=1):
+    IB = np.where(bf == np.max(bf))[0]
+    IW= np.where(bf == np.max(bf))[1]
+    OW = np.where(bf == np.max(bf))[2]
     
+
     datasamp = datagen(N,neurons,fun,a,b,legendre)
     val_inputs,val_labels = datasamp.get_val()
     train_inputs,train_labels = datasamp.get_train()
@@ -145,11 +168,14 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1):
         def __init__(self):
             super(SemilockedCybenko,self).__init__()
             self.fc1 = torch.nn.Linear(1,neurons,bias=True)
-            self.fc1.weight.data = torch.ones(neurons-1).reshape(-1,1)
+            self.fc1.weight.data = torch.tensor(totalWeightList[IW[0]]).reshape(-1,1).float()
             self.fc1.weight.requires_grad_(False)
             self.fc1.bias.requires_grad_(True)
+            self.fc1.bias.data = torch.tensor(totalBiasList[IB[0]]).reshape(1,-1).float()
+            
             self.fc2 = torch.nn.Linear(neurons,1,bias=False)
-            self.relu = torch.nn.Sigmoid()
+            self.fc2.weight.data = torch.tensor(totalWeightList[OW[0]]).reshape(1,-1).float()
+            self.relu = torch.nn.ReLU()
             
             
         
@@ -161,8 +187,8 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1):
         def __init__(self):
             super(UnlockedCybenko,self).__init__()
             self.fc1 = torch.nn.Linear(1,neurons,bias=True)
-            self.fc2 = torch.nn.Linear(neurons,1,bias=True)
-            self.relu = torch.nn.Sigmoid()
+            self.fc2 = torch.nn.Linear(neurons,1,bias=False)
+            self.relu = torch.nn.ReLU()
         
         def forward(self,x):
             x = self.relu(self.fc1(x))
@@ -181,21 +207,21 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1):
             x = self.relu(self.fc2(x))
             return self.fc3(x)
     
-    model = Network()
+    model = SemilockedCybenko()
     criterion = torch.nn.MSELoss(reduction="sum")
-    optimizer = torch.optim.SGD(model.parameters(),lr=0.005)
+    optimizer = torch.optim.SGD(model.parameters(),lr=0.005,momentum=0.3)
+    
+    EL2Val = []
+    EL2train = []
+    ELinf = []
+    EL2 = [] # L2 integral between f and u_teta
     
     lr_finder = LRFinder(model, optimizer, criterion)
     lr_finder.range_test(train_loader, start_lr=0.001, end_lr=1.5, num_iter=1000)
     lr_finder.reset() # to reset the model and optimizer to their initial state
     learning = lr_finder.history.get('lr')[np.argmin(lr_finder.history.get('loss'))]
     
-    optimizer = torch.optim.SGD(model.parameters(),lr=0.1)
-    
-    EL2Val = []
-    EL2train = []
-    ELinf = []
-    EL2 = [] # L2 integral between f and u_teta
+    optimizer = torch.optim.SGD(model.parameters(),lr=0.08)
     
     for epoch in range(iter):
         x = []
@@ -256,9 +282,12 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1):
     
     return model
 
+k = 100;
 np.random.seed(0)
 torch.manual_seed(0)
-model = Interpol(100,10,10000,9,-1,1)
+totalWeightList = ListInitWeights(np.linspace(-1,1,6),2)
+totalBiasList = ListInitWeights(np.linspace(-1,1,6),2)
+model = Interpol(30,2,2000,11,-1,1)
 # Interpol(N,neurons,epoch,fun=2, a=1, b=2, displayReal=1,typePoint=0)
 # N : number of regression points
 # deg : degree of interpolating polynomial

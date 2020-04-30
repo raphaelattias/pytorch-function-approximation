@@ -19,31 +19,31 @@ from mpl_toolkits import mplot3d
 
 pl.clf()
 
-def truef(x,fun): # Define the true function for our label y_data
-    # Define Set of Functions
-    a = 4.5
-    b = 1.75
-    def f0(x):
-        n = 10
-        y = 0
-        for i in range(n):
-            y = y + (1**n)*np.cos(np.pi*x*1.9**n)
-        return y
-    f1 = lambda t : np.cos(2*pl.pi*b+a*t)
-    f2 = lambda t : (a**(-2)+(t-b)**2)**(-1)
-    f3 = lambda t : (1+a*t)
-    f4 = lambda t : np.exp(-a**2 * (t-b)**2)
-    f5 = lambda t : np.exp(-a*np.abs(t-b))
-    f6 = lambda t : 1/(1+25*x**2)
-    f8 = lambda t : np.sin(4*pl.pi*x)*np.exp(-np.abs(5*x))
-    def f9(x):
-        return np.interp(x,np.linspace(-1,1,6),[0,1,0.4,1,0.8,0])
+def truef(x): # Define the true function for our label y_data
     
-    def f7(x):  
-        return 1/(x**2+1)
-    F = [f0,f1,f2,f3,f4,f5,f6,f7,f8,f9]
+    
+    class target(torch.nn.Module): # Arbitrary network
+        def __init__(self):
+            super(target,self).__init__()
+            self.fc1 = torch.nn.Linear(1,15,bias=True)
+            self.fc2 = torch.nn.Linear(15,15,bias=True)
+            self.fc3 = torch.nn.Linear(15,15,bias=True)
+            self.fc4 = torch.nn.Linear(15,1,bias=False)
+            self.relu = torch.nn.ReLU()
+        
+        def forward(self,x):
+            x = self.relu(self.fc1(x))
+            x = self.relu(self.fc2(x))
+            x = self.relu(self.fc3(x))
+            return self.fc4(x)
+        
+    model = target()
+    PATH = "/Users/raphael-attias/Library/Mobile Documents/com~apple~CloudDocs/Cours/Semestre 6 - 2019:2020/Projet/Code/Prototype2LayerTarget.pth"
+    model.load_state_dict(torch.load(PATH))
+    
 
-    return F[fun](x)
+    return model(Variable(torch.from_numpy(x)).reshape(-1,1).float()).detach().numpy()
+
 
 def MLEf(x,x_data,y_data):
     
@@ -80,8 +80,8 @@ def datasample(N,fun,a,b,legendre):
         train_inputs = np.random.uniform(a,b,N)
         val_inputs = np.random.uniform(a,b,int(N*3))
         
-    train_labels = truef(train_inputs, fun)
-    val_labels = truef(val_inputs,fun)
+    train_labels = truef(train_inputs)
+    val_labels = truef(val_inputs)
         
     return train_inputs.reshape(-1,1).tolist(),train_labels.reshape(-1,1).tolist(),val_inputs.reshape(-1,1).tolist(),val_labels.reshape(-1,1).tolist()
 
@@ -119,7 +119,7 @@ def weierstrass(x, N):
 	return y
 
 
-def Interpol(N,neurons,iter,fun=0,a=1,b=1):
+def Interpol(N,neurons,iter,a=1,b=1,fun=1):
     
     datasamp = datagen(N,neurons,fun,a,b,legendre)
     val_inputs,val_labels = datasamp.get_val()
@@ -162,7 +162,7 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1):
             super(UnlockedCybenko,self).__init__()
             self.fc1 = torch.nn.Linear(1,neurons,bias=True)
             self.fc2 = torch.nn.Linear(neurons,1,bias=True)
-            self.relu = torch.nn.Sigmoid()
+            self.relu = torch.nn.ReLU()
         
         def forward(self,x):
             x = self.relu(self.fc1(x))
@@ -172,8 +172,8 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1):
         def __init__(self):
             super(Network,self).__init__()
             self.fc1 = torch.nn.Linear(1,neurons,bias=True)
-            self.fc2 = torch.nn.Linear(neurons,2*neurons,bias=True)
-            self.fc3 = torch.nn.Linear(2*neurons,1,bias=True)
+            self.fc2 = torch.nn.Linear(neurons,neurons,bias=True)
+            self.fc3 = torch.nn.Linear(neurons,1,bias=False)
             self.relu = torch.nn.ReLU()
         
         def forward(self,x):
@@ -182,15 +182,16 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1):
             return self.fc3(x)
     
     model = Network()
+    
     criterion = torch.nn.MSELoss(reduction="sum")
-    optimizer = torch.optim.SGD(model.parameters(),lr=0.005)
+    optimizer = torch.optim.SGD(model.parameters(),lr=0.005,momentum=0.3)
     
     lr_finder = LRFinder(model, optimizer, criterion)
     lr_finder.range_test(train_loader, start_lr=0.001, end_lr=1.5, num_iter=1000)
     lr_finder.reset() # to reset the model and optimizer to their initial state
     learning = lr_finder.history.get('lr')[np.argmin(lr_finder.history.get('loss'))]
     
-    optimizer = torch.optim.SGD(model.parameters(),lr=0.1)
+    optimizer = torch.optim.SGD(model.parameters(),lr=0.09)
     
     EL2Val = []
     EL2train = []
@@ -216,7 +217,7 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1):
             return model(torch.tensor(x.reshape(-1,1).tolist(),requires_grad=False)).data.numpy().reshape(1,-1)
     
         def L2error(x):
-            return (modelonx(x)-np.array(truef(x,fun)).reshape(1,-1))**2
+            return (modelonx(x)-np.array(truef(x)).reshape(1,-1))**2
         
         ELinf.append(max(abs(val_labels-model(val_inputs))))
         EL2.append(quadrature(L2error,-1,1)[0][0])
@@ -240,8 +241,7 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1):
             ReLU = lambda t : np.where(t<=0,0,t)
             ax[0].plot(xx,alpha[0]*ReLU(xx-X[0])+alpha[1]*ReLU(xx-X[1])+alpha[2]*ReLU(xx-X[2])+alpha[3]*ReLU(xx-X[3])+alpha[4]*ReLU(xx-X[4])+alpha[5]*ReLU(xx-X[5]))
             """
-
-            ax[0].plot(plotrange,truef(plotrange,fun),c='blue') 
+            ax[0].plot(plotrange,truef(plotrange),c='blue') 
             #ax[0].plot(np.linspace(a-0.1,b+0.1,100),np.polyval(np.polyfit(train_inputs.data.numpy().reshape(1,-1)[0],train_labels.data.numpy().reshape(1,-1)[0],10),np.linspace(a-0.1,b+0.1,100)),c='green')
             if fun == 7:
                 ax[0].plot(plotrange,maclaurin(plotrange,50),c='green')
@@ -258,7 +258,7 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1):
 
 np.random.seed(0)
 torch.manual_seed(0)
-model = Interpol(100,10,10000,9,-1,1)
+model = Interpol(100,21,8000,-1,1)
 # Interpol(N,neurons,epoch,fun=2, a=1, b=2, displayReal=1,typePoint=0)
 # N : number of regression points
 # deg : degree of interpolating polynomial

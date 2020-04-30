@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Apr 11 09:57:17 2020
+
+@author: raphael-attias
+"""
+
 import torch
 import pdb
 import numpy as np
@@ -6,23 +14,20 @@ import matplotlib as plt
 import matplotlib.patches as mpatches
 import pylab as pl
 import torch.nn.functional as F
-from torchsummary import summary
 from torch.utils.data import Dataset, DataLoader
 from random import sample 
 from scipy.stats import truncnorm
 from scipy.integrate import quadrature
-from torch_lr_finder import LRFinder
-import matplotlib.animation as animation
-from torch.autograd import Variable
-from mpl_toolkits import mplot3d
+import time
+import itertools
 
 
 pl.clf()
 
 def truef(x,fun): # Define the true function for our label y_data
     # Define Set of Functions
-    a = 4.5
-    b = 1.75
+    a = 3
+    b = 1/4
     def f0(x):
         n = 10
         y = 0
@@ -72,7 +77,7 @@ def chebychevPoints(N):
     return arr
 
 def datasample(N,fun,a,b,legendre):
-    type = 2
+    type = 1
     if type == 1:
         train_inputs = truncnorm.rvs(a,b,size=N)
         val_inputs = truncnorm.rvs(a,b,size=int(N*3))
@@ -119,8 +124,8 @@ def weierstrass(x, N):
 	return y
 
 
-def Interpol(N,neurons,iter,fun=0,a=1,b=1):
-    
+def Interpol(N,neurons,iter,initial_weights,initial_bias,fun=0,a=1,b=1):
+
     datasamp = datagen(N,neurons,fun,a,b,legendre)
     val_inputs,val_labels = datasamp.get_val()
     train_inputs,train_labels = datasamp.get_train()
@@ -135,23 +140,25 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1):
             self.fc1.weight.requires_grad_(False)
             self.fc1.bias.requires_grad_(False)
             self.fc2 = torch.nn.Linear(neurons,1,bias=False)
+            self.fc2.weight.data = initial_weights.reshape(1,-1).float()
             self.relu = torch.nn.ReLU()
         
         def forward(self,x):
             x = self.relu(self.fc1(x))
             return self.fc2(x)
         
-    class SemilockedCybenko(torch.nn.Module): # Cybenko with inner weight=-1, one node less and free bias
+    class SemilockedCybenko(torch.nn.Module): # Cybenko with inner weight=-1, and free bias
         def __init__(self):
             super(SemilockedCybenko,self).__init__()
             self.fc1 = torch.nn.Linear(1,neurons,bias=True)
-            self.fc1.weight.data = torch.ones(neurons-1).reshape(-1,1)
+            self.fc1.weight.data = torch.ones(neurons).reshape(-1,1).float()
             self.fc1.weight.requires_grad_(False)
             self.fc1.bias.requires_grad_(True)
+            self.fc1.bias.data = initial_bias.reshape(1,-1).float()
+            
             self.fc2 = torch.nn.Linear(neurons,1,bias=False)
-            self.relu = torch.nn.Sigmoid()
-            
-            
+            self.fc2.weight.data = initial_weights.reshape(1,-1).float()
+            self.relu = torch.nn.ReLU()
         
         def forward(self,x):
             x = self.relu(self.fc1(x))
@@ -161,8 +168,8 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1):
         def __init__(self):
             super(UnlockedCybenko,self).__init__()
             self.fc1 = torch.nn.Linear(1,neurons,bias=True)
-            self.fc2 = torch.nn.Linear(neurons,1,bias=True)
-            self.relu = torch.nn.Sigmoid()
+            self.fc2 = torch.nn.Linear(neurons,1,bias=False)
+            self.relu = torch.nn.ReLU()
         
         def forward(self,x):
             x = self.relu(self.fc1(x))
@@ -181,32 +188,22 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1):
             x = self.relu(self.fc2(x))
             return self.fc3(x)
     
-    model = Network()
+    model = SemilockedCybenko()
     criterion = torch.nn.MSELoss(reduction="sum")
-    optimizer = torch.optim.SGD(model.parameters(),lr=0.005)
-    
-    lr_finder = LRFinder(model, optimizer, criterion)
-    lr_finder.range_test(train_loader, start_lr=0.001, end_lr=1.5, num_iter=1000)
-    lr_finder.reset() # to reset the model and optimizer to their initial state
-    learning = lr_finder.history.get('lr')[np.argmin(lr_finder.history.get('loss'))]
-    
-    optimizer = torch.optim.SGD(model.parameters(),lr=0.1)
+    optimizer = torch.optim.SGD(model.parameters(),lr=0.005,momentum=0.3)
     
     EL2Val = []
     EL2train = []
     ELinf = []
     EL2 = [] # L2 integral between f and u_teta
     
+    optimizer = torch.optim.SGD(model.parameters(),lr=0.08)
+    
     for epoch in range(iter):
-        x = []
-        ytrue = []
-        ypred = []
+
         for i, (inputs,labels) in enumerate(train_loader):
             y_pred = model(inputs)
             loss = criterion(y_pred,labels)
-            x.append(inputs.data.numpy())
-            ytrue.append(labels.data.numpy())
-            ypred.append(y_pred.data.numpy())     
             
             optimizer.zero_grad()
             loss.backward()
@@ -218,13 +215,10 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1):
         def L2error(x):
             return (modelonx(x)-np.array(truef(x,fun)).reshape(1,-1))**2
         
-        ELinf.append(max(abs(val_labels-model(val_inputs))))
-        EL2.append(quadrature(L2error,-1,1)[0][0])
         EL2Val.append(criterion(val_labels,model(val_inputs)))
         EL2train.append((criterion(train_labels,model(train_inputs))))
-        print(f'Epoch: {epoch} L2 Error on training : {EL2train[-1]:.6e} | L2 Error on validation : {EL2Val[-1]:.6e} | L2 on [-1,1] : {EL2[-1]:.6e}')
-
-        if epoch % 5 == 0:   
+       # print(f'Epoch: {epoch} L2 Error on training : {EL2train[-1]:.6e} | L2 Error on validation : {EL2Val[-1]:.6e} | L2 on [-1,1] : {EL2[-1]:.6e}')
+        if epoch == iter:   
             
             fig, ax = pl.subplots(nrows=1, ncols=2)
             plotrange = np.linspace(a-0.1,b+0.1,100)
@@ -252,25 +246,30 @@ def Interpol(N,neurons,iter,fun=0,a=1,b=1):
             ax[1].semilogy(range(epoch+1),EL2train,color='blue')
             #ax[1].semilogy(range(epoch+1),EL2,color='magenta')
             #ax[1].semilogy(range(epoch+1),ELinf,color='black')
-            pl.show()    
-    
-    return model
+            pl.show()   
+    return EL2train[-1].detach().numpy()
 
 np.random.seed(0)
 torch.manual_seed(0)
-model = Interpol(100,10,10000,9,-1,1)
-# Interpol(N,neurons,epoch,fun=2, a=1, b=2, displayReal=1,typePoint=0)
-# N : number of regression points
-# deg : degree of interpolating polynomial
-# epoch : number of iterations of backward steepest descent
-# fun : function to interpolate
-#       fun = 0 : random point with  y = normal distribution
-#       fun = 1 : GENZ1 Function : Oscillatory cos(2*pi*b+a*x)
 
-#       fun = 2 : GENZ2 Function : Product Peak
-#       fun = 3 : GENZ3 Function : Corner Peak  @#       fun = 5 : GENZ5 Function : C0 function
-#       fun = 6 : Runge Function : 1/(1+25*x**2) 
-# a : first parameter needed for fun
-# b : second parameter needed for fun
-# displayReal : BOOL that displays the real function if set to TRUE
-# typePoints : 0 for equidistant, 1 for Legendre, 2 for Chebychev
+def ListInitWeights(Range,Nb):
+    return np.array([np.array(i) for i in itertools.product(Range, repeat=Nb)])
+
+batch_size = 8;
+batch_id = 1
+
+totalWeightList = ListInitWeights(np.linspace(-5,5,3),6)
+totalBiasList = ListInitWeights(np.linspace(-2,2,2),6)
+totalLossList = np.zeros((len(totalBiasList),len(totalWeightList)))
+totallen = len(totalWeightList)*len(totalBiasList[(batch_id-1)*batch_size:(batch_id)*batch_size])
+
+
+k = 0
+for i in range((batch_id-1)*batch_size,(batch_id)*batch_size):
+    for j in range(len(totalWeightList)):
+        t = time.time()
+        np.random.seed(0)
+        k =k+1
+        totalLossList[i,j] = Interpol(30,6,50,torch.tensor(totalWeightList[j,:]),torch.tensor(totalBiasList[i,:]),9,-1,1)
+        print(f'Weight {k}/{totallen}, Loss {totalLossList[i,j]}, Weight & Bias {totalWeightList[j,:]}, {totalBiasList[i,:]}, Time : {time.time()-t}, Time remaining : {(totallen-k)*(time.time()-t)/360:.2f} h')
+  
